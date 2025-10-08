@@ -13,7 +13,8 @@ import os
 from bson import ObjectId
 import logging
 
-uri = "mongodb://XXXX"
+#get the uri from .env (MONGO_URI)
+uri = GETENV
 
 client = MongoClient(uri)
 db = client["ml"]
