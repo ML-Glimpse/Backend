@@ -62,7 +62,9 @@ This is a FastAPI-based ML backend for photo recommendations using face recognit
     "hashed_password": str,  # bcrypt hash
     "embeddings": [list[float], ...],  # all liked photo embeddings
     "avg_embedding": list[float] | None,  # running average
-    "embedding_count": int  # number of likes
+    "embedding_count": int,  # number of likes
+    "liked_photos": [str, ...],  # photo IDs user has liked
+    "disliked_photos": [str, ...]  # photo IDs user has passed
 }
 ```
 

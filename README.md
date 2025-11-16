@@ -7,7 +7,10 @@ A FastAPI-based machine learning backend for photo recommendation using face rec
 - 🔐 User authentication (registration/login)
 - 📸 Face detection and embedding extraction
 - 🎯 Personalized photo recommendations using FAISS
-- 👍 Swipe-based preference learning
+- 👍 Swipe-based preference learning (like/pass tracking)
+- 🚫 Smart filtering to avoid showing previously swiped photos
+- 🔄 Batch photo processing with automatic face detection
+- 🧹 User preference management (view and clear preferences)
 - ⚡ Fast similarity search with vector indexing
 
 ## Project Structure
@@ -209,6 +212,8 @@ Get personalized photo recommendations based on user's preference history.
 - If user has avg_embedding (has liked photos), uses FAISS index to find top-K similar photos
 - Similarity is calculated using inner product (cosine similarity on normalized embeddings)
 - New users without preferences receive random photo recommendations
+- Automatically excludes photos the user has already swiped (both liked and disliked)
+- Returns "all_photos_swiped" if user has swiped on all available photos
 - Number of recommendations controlled by `FAISS_RECOMMENDATIONS_COUNT` env variable (default: 10)
 - See `app/services/photo_service.py:48`
 
@@ -270,6 +275,59 @@ Get the user's average face embedding (preference profile).
 - This vector represents the user's aggregated facial preferences
 - Used as the query vector for FAISS similarity search
 - See `app/services/user_service.py:71`
+
+---
+
+#### `GET /users/{username}/swiped_photos`
+Get all photos the user has swiped (both liked and disliked).
+
+**Path Parameters:**
+- `username` - The username to get swiped photos for
+
+**Response:**
+```json
+{
+  "liked_photos": ["photo_id_1", "photo_id_2", ...],
+  "disliked_photos": ["photo_id_3", "photo_id_4", ...]
+}
+```
+
+**Error Cases:**
+- `404 Not Found` - User not found
+
+**Implementation Details:**
+- Returns arrays of photo IDs that the user has swiped on
+- liked_photos contains IDs of photos the user swiped right on
+- disliked_photos contains IDs of photos the user passed (swiped left)
+- These photos are excluded from future recommendations
+- See `app/services/user_service.py:153`
+
+---
+
+#### `DELETE /users/{username}/preferences`
+Clear all user preferences including embeddings and swipe history.
+
+**Path Parameters:**
+- `username` - The username to clear preferences for
+
+**Response:**
+```json
+{
+  "msg": "User preferences cleared successfully"
+}
+```
+
+**Error Cases:**
+- `404 Not Found` - User not found
+
+**Implementation Details:**
+- Resets avg_embedding to null
+- Clears all embeddings array
+- Resets embedding_count to 0
+- Clears both liked_photos and disliked_photos arrays
+- User will receive random recommendations after clearing
+- Useful for resetting a user's preference profile
+- See `app/services/user_service.py:179`
 
 ---
 
@@ -426,6 +484,42 @@ Process a user's swipe action on a photo (like or pass).
 
 ### Admin
 
+#### `POST /admin/process_embeddings`
+Process all photos in the database and extract face embeddings.
+
+**Query Parameters:**
+- `force` (optional, default: false) - If true, re-process all photos even if they already have embeddings
+
+**Request Body:** None
+
+**Response:**
+```json
+{
+  "msg": "Photo embedding processing completed",
+  "total_photos": 1523,
+  "photos_processed": 245,
+  "photos_with_embeddings": 1400,
+  "no_face_detected": 45,
+  "photos_deleted": 45,
+  "remaining_photos": 1478,
+  "failed": 0
+}
+```
+
+**Error Cases:**
+- `500 Internal Server Error` - Error during processing
+
+**Implementation Details:**
+- By default, only processes photos without embeddings
+- With `force=true`, re-processes all photos regardless of existing embeddings
+- Uses InsightFace to detect faces and extract 512-dim embeddings
+- Photos with no face detected are automatically deleted from the database
+- Useful for batch processing newly uploaded photos
+- Should call `/admin/rebuild_index` after processing to update FAISS index
+- See `app/services/photo_service.py:132`
+
+---
+
 #### `POST /admin/rebuild_index`
 Rebuild the FAISS similarity search index from all photos in the database.
 
@@ -471,6 +565,37 @@ Get the current status and statistics of the FAISS index.
 - total_photos_indexed indicates how many photos are searchable
 - index_dimension should always be 512 (InsightFace embedding size)
 - Use this to verify the index is properly initialized after startup or rebuild
+
+---
+
+#### `GET /admin/debug/{username}`
+Debug endpoint to inspect user's swipe history and FAISS index state.
+
+**Path Parameters:**
+- `username` - The username to debug
+
+**Response:**
+```json
+{
+  "liked_photos": ["photo_id_1", "photo_id_2", ...],
+  "liked_types": ["str", "str", "str"],
+  "disliked_photos": ["photo_id_3", "photo_id_4", ...],
+  "disliked_types": ["str", "str", "str"],
+  "faiss_photo_ids_sample": ["photo_id_5", "photo_id_6", "photo_id_7"],
+  "faiss_types": ["str", "str", "str"]
+}
+```
+
+**Error Cases:**
+- `404 Not Found` - User not found
+
+**Implementation Details:**
+- Returns user's liked and disliked photo arrays
+- Shows data types of photo IDs for debugging type mismatches
+- Provides sample of photo IDs in the FAISS index
+- Useful for debugging recommendation filtering issues
+- Helps verify photo ID consistency between user records and FAISS index
+- See `app/api/routes.py:116`
 
 ---
 
@@ -545,11 +670,13 @@ mypy app/
 
 ### Recommendation Algorithm
 
-1. User likes a photo (swipe right)
-2. Face embedding is extracted from the photo
-3. User's average embedding is updated incrementally
-4. FAISS index searches for similar photos based on user's preferences
-5. Top-K most similar photos are returned as recommendations
+1. User swipes on a photo (right for like, left for pass)
+2. Swipe action is recorded in user's liked_photos or disliked_photos array
+3. If liked, face embedding is extracted from the photo
+4. User's average embedding is updated incrementally with the liked photo's embedding
+5. FAISS index searches for similar photos based on user's preferences
+6. Previously swiped photos are excluded from recommendations
+7. Top-K most similar photos are returned as recommendations
 
 ## Technologies
 
