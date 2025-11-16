@@ -44,6 +44,12 @@ def get_avg_embedding(username: str):
     return user_service.get_user_avg_embedding(username)
 
 
+@router.get("/users/{username}/swiped_photos")
+def get_swiped_photos(username: str):
+    """Get all photos the user has swiped (liked and disliked)"""
+    return user_service.get_swiped_photos(username)
+
+
 @router.delete("/users/{username}/preferences")
 def clear_preferences(username: str):
     """Clear user's preference embeddings and average"""
@@ -105,3 +111,25 @@ def rebuild_faiss_index():
 def get_index_status():
     """Get FAISS index status"""
     return faiss_service.get_index_status()
+
+
+@router.get("/admin/debug/{username}")
+def debug_user_data(username: str):
+    """Debug endpoint to check user's swiped photos and FAISS index"""
+    from app.core.database import users_collection
+    user_data = users_collection.find_one({"username": username})
+    if not user_data:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="User not found")
+
+    liked = user_data.get("liked_photos", [])
+    disliked = user_data.get("disliked_photos", [])
+
+    return {
+        "liked_photos": liked,
+        "liked_types": [type(p).__name__ for p in liked[:3]],
+        "disliked_photos": disliked,
+        "disliked_types": [type(p).__name__ for p in disliked[:3]],
+        "faiss_photo_ids_sample": faiss_service.photo_ids_list[:3],
+        "faiss_types": [type(p).__name__ for p in faiss_service.photo_ids_list[:3]]
+    }

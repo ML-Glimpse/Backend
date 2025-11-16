@@ -28,8 +28,7 @@ class SwipeService:
         Raises:
             HTTPException: If photo/user not found or processing fails
         """
-        if swipe.action != "like":
-            return {"msg": "Pass recorded", "embedding_updated": False}
+        from app.core.database import users_collection
 
         try:
             # Get photo
@@ -37,6 +36,16 @@ class SwipeService:
             if not photo:
                 raise HTTPException(status_code=404, detail="Photo not found")
 
+            # Handle "pass" action
+            if swipe.action != "like":
+                # Record disliked photo
+                users_collection.update_one(
+                    {"username": swipe.username},
+                    {"$addToSet": {"disliked_photos": swipe.photo_id}}
+                )
+                return {"msg": "Pass recorded", "embedding_updated": False}
+
+            # Handle "like" action
             # Get or extract embedding
             if "embedding" in photo:
                 embedding_list = photo["embedding"]
@@ -55,7 +64,12 @@ class SwipeService:
                     {"$set": {"embedding": embedding_list}}
                 )
 
-            # Update user's average embedding
+            # Record liked photo and update user's average embedding
+            users_collection.update_one(
+                {"username": swipe.username},
+                {"$addToSet": {"liked_photos": swipe.photo_id}}
+            )
+
             result = user_service.update_user_embedding(swipe.username, embedding_list)
 
             return {

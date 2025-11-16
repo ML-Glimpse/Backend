@@ -65,11 +65,20 @@ class PhotoService:
 
         user_avg_embedding = user_data.get("avg_embedding")
 
+        # Get list of photos to exclude (already swiped)
+        liked_photos = user_data.get("liked_photos", [])
+        disliked_photos = user_data.get("disliked_photos", [])
+        excluded_photo_ids = set(liked_photos + disliked_photos)
+
+        logger.info(f"User {username}: {len(liked_photos)} liked, {len(disliked_photos)} disliked")
+        logger.info(f"Excluded IDs sample: {list(excluded_photo_ids)[:3]}")
+
         # Personalized recommendations if user has preferences
         if user_avg_embedding and faiss_service.faiss_index is not None:
             recommendations = faiss_service.get_recommendations(
                 user_avg_embedding,
-                k=settings.faiss_recommendations_count
+                k=settings.faiss_recommendations_count,
+                excluded_photo_ids=list(excluded_photo_ids)
             )
 
             return {
@@ -82,9 +91,21 @@ class PhotoService:
             if not faiss_service.photo_ids_list:
                 return {"recommendations": [], "recommendation_type": "no_photos"}
 
+            # Filter out already swiped photos
+            available_photo_ids = [
+                photo_id for photo_id in faiss_service.photo_ids_list
+                if photo_id not in excluded_photo_ids
+            ]
+
+            if not available_photo_ids:
+                return {
+                    "recommendations": [],
+                    "recommendation_type": "all_photos_swiped"
+                }
+
             random_photo_ids = random.sample(
-                faiss_service.photo_ids_list,
-                min(settings.faiss_recommendations_count, len(faiss_service.photo_ids_list))
+                available_photo_ids,
+                min(settings.faiss_recommendations_count, len(available_photo_ids))
             )
 
             recommendations = []

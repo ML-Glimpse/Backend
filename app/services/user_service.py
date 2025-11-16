@@ -37,7 +37,9 @@ class UserService:
             "hashed_password": hashed,
             "embeddings": [],
             "avg_embedding": None,
-            "embedding_count": 0
+            "embedding_count": 0,
+            "liked_photos": [],
+            "disliked_photos": []
         })
 
         logger.info(f"User {user.username} registered successfully")
@@ -148,6 +150,32 @@ class UserService:
         return {"msg": "Embedding added"}
 
     @staticmethod
+    def get_swiped_photos(username: str) -> dict:
+        """
+        Get list of all photos the user has swiped (both liked and disliked)
+
+        Args:
+            username: Username
+
+        Returns:
+            Dict with liked_photos and disliked_photos arrays
+
+        Raises:
+            HTTPException: If user not found
+        """
+        user = users_collection.find_one(
+            {"username": username},
+            {"_id": 0, "liked_photos": 1, "disliked_photos": 1}
+        )
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        return {
+            "liked_photos": user.get("liked_photos", []),
+            "disliked_photos": user.get("disliked_photos", [])
+        }
+
+    @staticmethod
     def clear_user_preferences(username: str) -> dict:
         """
         Clear user's preference embeddings and reset average
@@ -167,7 +195,9 @@ class UserService:
                 "$set": {
                     "avg_embedding": None,
                     "embedding_count": 0,
-                    "embeddings": []
+                    "embeddings": [],
+                    "liked_photos": [],
+                    "disliked_photos": []
                 }
             }
         )

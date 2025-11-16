@@ -100,13 +100,19 @@ class FAISSService:
         else:
             logger.warning("No valid embeddings found")
 
-    def get_recommendations(self, user_avg_embedding: list[float], k: int = 10) -> list[dict]:
+    def get_recommendations(
+        self,
+        user_avg_embedding: list[float],
+        k: int = 10,
+        excluded_photo_ids: list[str] = None
+    ) -> list[dict]:
         """
         Get photo recommendations based on user's average embedding
 
         Args:
             user_avg_embedding: User's average preference embedding
             k: Number of recommendations to return
+            excluded_photo_ids: List of photo IDs to exclude from recommendations
 
         Returns:
             List of recommended photos with similarity scores
@@ -114,16 +120,36 @@ class FAISSService:
         if self.faiss_index is None or len(self.photo_ids_list) == 0:
             return []
 
+        if excluded_photo_ids is None:
+            excluded_photo_ids = []
+
+        excluded_set = set(excluded_photo_ids)
+        logger.info(f"FAISS filtering {len(excluded_set)} excluded photos")
+        logger.info(f"Excluded set sample: {list(excluded_set)[:3]}")
+        logger.info(f"Photo IDs list sample: {self.photo_ids_list[:3]}")
+
         query_embedding = np.array(user_avg_embedding, dtype="float32").reshape(1, -1)
 
-        actual_k = min(k, self.faiss_index.ntotal)
+        # Request more candidates to account for filtered results
+        search_k = min(k * 3, self.faiss_index.ntotal)
 
-        similarities, indices = self.faiss_index.search(query_embedding, actual_k)
+        similarities, indices = self.faiss_index.search(query_embedding, search_k)
 
         recommendations = []
-        for i, (similarity, idx) in enumerate(zip(similarities[0], indices[0])):
+        rank = 1
+        filtered_count = 0
+        for similarity, idx in zip(similarities[0], indices[0]):
+            if len(recommendations) >= k:
+                break
+
             if idx < len(self.photo_ids_list):
                 photo_id = self.photo_ids_list[idx]
+
+                # Skip excluded photos
+                if photo_id in excluded_set:
+                    filtered_count += 1
+                    logger.info(f"Filtering out photo_id: {photo_id}")
+                    continue
 
                 photo_info = photos_collection.find_one(
                     {"_id": ObjectId(photo_id)},
@@ -136,9 +162,11 @@ class FAISSService:
                         "filename": photo_info.get("filename", "unknown"),
                         "content_type": photo_info.get("content_type", "image/jpeg"),
                         "similarity": float(similarity),
-                        "rank": i + 1
+                        "rank": rank
                     })
+                    rank += 1
 
+        logger.info(f"Filtered {filtered_count} photos, returning {len(recommendations)} recommendations")
         return recommendations
 
     def get_index_status(self) -> dict:
