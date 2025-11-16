@@ -147,6 +147,37 @@ class UserService:
             raise HTTPException(status_code=404, detail="User not found")
         return {"msg": "Embedding added"}
 
+    @staticmethod
+    def clear_user_preferences(username: str) -> dict:
+        """
+        Clear user's preference embeddings and reset average
+
+        Args:
+            username: Username
+
+        Returns:
+            Success message
+
+        Raises:
+            HTTPException: If user not found
+        """
+        result = users_collection.update_one(
+            {"username": username},
+            {
+                "$set": {
+                    "avg_embedding": None,
+                    "embedding_count": 0,
+                    "embeddings": []
+                }
+            }
+        )
+
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        logger.info(f"Cleared preferences for user {username}")
+        return {"msg": "User preferences cleared successfully"}
+
 
 # Global instance
 user_service = UserService()

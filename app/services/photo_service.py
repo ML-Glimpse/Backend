@@ -8,6 +8,7 @@ import logging
 from app.core.database import photos_collection, users_collection
 from app.core.config import get_settings
 from .faiss_service import faiss_service
+from .face_recognition import face_recognition_service
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -105,6 +106,77 @@ class PhotoService:
                 "recommendations": recommendations,
                 "recommendation_type": "random" if not user_avg_embedding else "no_index"
             }
+
+    @staticmethod
+    def process_all_photo_embeddings(force: bool = False) -> dict:
+        """
+        Process all photos in the database and add embeddings
+
+        Args:
+            force: If True, re-process all photos even if they have embeddings
+
+        Returns:
+            Statistics about the processing operation
+        """
+        logger.info(f"Starting to process photos for embeddings (force={force})")
+
+        # Find photos to process
+        if force:
+            photos_to_process = list(photos_collection.find({}))
+            logger.info(f"Force mode: processing all {len(photos_to_process)} photos")
+        else:
+            photos_to_process = list(photos_collection.find({
+                "$or": [
+                    {"embedding": {"$exists": False}},
+                    {"embedding": None}
+                ]
+            }))
+            logger.info(f"Found {len(photos_to_process)} photos without embeddings")
+
+        total_photos = photos_collection.count_documents({})
+
+        logger.info(f"Total photos in database: {total_photos}")
+
+        processed_count = 0
+        failed_count = 0
+        no_face_count = 0
+        deleted_count = 0
+
+        for photo in photos_to_process:
+            try:
+                embedding = face_recognition_service.extract_embedding(photo["data"])
+
+                if embedding:
+                    photos_collection.update_one(
+                        {"_id": photo["_id"]},
+                        {"$set": {"embedding": embedding}}
+                    )
+                    processed_count += 1
+                    logger.info(f"Added embedding for photo {photo['_id']}")
+                else:
+                    # Delete photo if no face detected
+                    photos_collection.delete_one({"_id": photo["_id"]})
+                    deleted_count += 1
+                    no_face_count += 1
+                    logger.warning(f"No face detected in photo {photo['_id']} - deleted from database")
+
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"Error processing photo {photo['_id']}: {e}")
+
+        photos_with_embedding = photos_collection.count_documents({"embedding": {"$exists": True}})
+        remaining_photos = photos_collection.count_documents({})
+
+        return {
+            "msg": "Photo embedding processing completed",
+            "total_photos": total_photos,
+            "photos_processed": processed_count,
+            "photos_with_embeddings": photos_with_embedding,
+            "no_face_detected": no_face_count,
+            "photos_deleted": deleted_count,
+            "remaining_photos": remaining_photos,
+            "failed": failed_count
+        }
 
 
 # Global instance

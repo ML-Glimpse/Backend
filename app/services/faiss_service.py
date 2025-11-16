@@ -54,11 +54,40 @@ class FAISSService:
 
         embeddings_list = []
         self.photo_ids_list = []
+        invalid_count = 0
+        expected_dim = settings.faiss_dimension
 
         for photo in photos_with_embedding:
-            embeddings_list.append(np.array(photo["embedding"], dtype="float32"))
-            self.photo_ids_list.append(str(photo["_id"]))
-            self.embeddings_cache[str(photo["_id"])] = photo["embedding"]
+            try:
+                embedding = photo.get("embedding")
+
+                # Skip if embedding is None or empty
+                if embedding is None or not embedding:
+                    logger.warning(f"Photo {photo['_id']} has null/empty embedding - deleting")
+                    photos_collection.delete_one({"_id": photo["_id"]})
+                    invalid_count += 1
+                    continue
+
+                # Validate embedding dimension
+                embedding_array = np.array(embedding, dtype="float32")
+                if embedding_array.shape[0] != expected_dim:
+                    logger.warning(f"Photo {photo['_id']} has invalid embedding dimension {embedding_array.shape[0]} (expected {expected_dim}) - deleting")
+                    photos_collection.delete_one({"_id": photo["_id"]})
+                    invalid_count += 1
+                    continue
+
+                # Add valid embedding
+                embeddings_list.append(embedding_array)
+                self.photo_ids_list.append(str(photo["_id"]))
+                self.embeddings_cache[str(photo["_id"])] = embedding
+
+            except Exception as e:
+                logger.error(f"Error processing embedding for photo {photo['_id']}: {e} - deleting")
+                photos_collection.delete_one({"_id": photo["_id"]})
+                invalid_count += 1
+
+        if invalid_count > 0:
+            logger.info(f"Deleted {invalid_count} photos with invalid embeddings")
 
         if embeddings_list:
             embeddings_array = np.vstack(embeddings_list)

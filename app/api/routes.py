@@ -1,5 +1,6 @@
 """API route definitions"""
 from fastapi import APIRouter
+from fastapi.responses import Response
 
 from app.models.schemas import User, EmbeddingIn, SearchIn, SwipeAction
 from app.services.user_service import user_service
@@ -43,6 +44,12 @@ def get_avg_embedding(username: str):
     return user_service.get_user_avg_embedding(username)
 
 
+@router.delete("/users/{username}/preferences")
+def clear_preferences(username: str):
+    """Clear user's preference embeddings and average"""
+    return user_service.clear_user_preferences(username)
+
+
 @router.post("/users/{username}/search")
 def search_embeddings(username: str, query: SearchIn):
     """Search user's embeddings using FAISS"""
@@ -59,7 +66,11 @@ def get_recommendations(username: str):
 @router.get("/photos/{photo_id}")
 def get_photo(photo_id: str):
     """Get photo binary data"""
-    return photo_service.get_photo(photo_id)
+    photo_data = photo_service.get_photo(photo_id)
+    return Response(
+        content=photo_data["data"],
+        media_type=photo_data["content_type"]
+    )
 
 
 # Swipe endpoints
@@ -70,6 +81,12 @@ async def handle_swipe(swipe: SwipeAction):
 
 
 # Admin endpoints
+@router.post("/admin/process_embeddings")
+def process_all_embeddings(force: bool = False):
+    """Process all photos and add embeddings (admin only)"""
+    return photo_service.process_all_photo_embeddings(force=force)
+
+
 @router.post("/admin/rebuild_index")
 def rebuild_faiss_index():
     """Rebuild FAISS index (admin only)"""
