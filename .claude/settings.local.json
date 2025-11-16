@@ -10,7 +10,8 @@
       "Bash(uvicorn:*)",
       "Bash(py:*)",
       "Bash(where cl)",
-      "Bash(./Scripts/python.exe -m pip install:*)"
+      "Bash(./Scripts/python.exe -m pip install:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []

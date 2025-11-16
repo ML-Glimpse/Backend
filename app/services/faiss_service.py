@@ -131,7 +131,12 @@ class FAISSService:
         query_embedding = np.array(user_avg_embedding, dtype="float32").reshape(1, -1)
 
         # Request more candidates to account for filtered results
-        search_k = min(k * 3, self.faiss_index.ntotal)
+        # Dynamic multiplier: base 3x + additional buffer based on excluded count
+        excluded_count = len(excluded_set)
+        multiplier = max(3, min(10, 3 + (excluded_count // 20)))
+        search_k = min(k * multiplier + excluded_count, self.faiss_index.ntotal)
+
+        logger.info(f"Requesting {search_k} candidates (k={k}, multiplier={multiplier}, excluded={excluded_count})")
 
         similarities, indices = self.faiss_index.search(query_embedding, search_k)
 
