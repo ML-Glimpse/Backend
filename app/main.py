@@ -1,5 +1,6 @@
 """FastAPI application entry point"""
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 from app.core.config import get_settings
@@ -19,6 +20,14 @@ settings = get_settings()
 app = FastAPI(
     title=settings.app_name,
     debug=settings.debug
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows localhost:5173 to connect
+    allow_credentials=True,
+    allow_methods=["*"],  # Fixes the 405 Method Not Allowed error
+    allow_headers=["*"],
 )
 
 # Include API routes
