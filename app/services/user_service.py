@@ -10,6 +10,10 @@ from app.models.schemas import User
 
 logger = logging.getLogger(__name__)
 
+# --- ML CONFIGURATION ---
+# 0.9 means history counts for 90%, new photo counts for 10%.
+# Lower this number (e.g., 0.8) if you want the user's preference to change FASTER.
+HISTORY_DECAY = 0.9
 
 class UserService:
     """Service for user management operations"""
@@ -73,6 +77,7 @@ class UserService:
     def update_user_embedding(username: str, embedding: list[float]) -> dict:
         """
         Update user's average embedding with a new liked photo embedding
+        Update user's average embedding with a discount factor (Exponential Moving Average)
 
         Args:
             username: Username
@@ -97,7 +102,18 @@ class UserService:
         else:
             current_avg_np = np.array(current_avg)
             new_embedding_np = np.array(embedding)
-            new_avg_np = (current_avg_np * current_count + new_embedding_np) / (current_count + 1)
+
+            # new_avg_np = (current_avg_np * current_count + new_embedding_np) / (current_count + 1)
+            # --- NEW ALGORITHM: Exponential Moving Average ---
+            # NewAvg = (OldAvg * Decay) + (NewPhoto * (1 - Decay))
+            new_avg_np = (current_avg_np * HISTORY_DECAY) + (new_embedding_np * (1.0 - HISTORY_DECAY))
+            # CRITICAL ML STEP: Re-normalize!
+            # When you average two unit vectors, the result is shorter than length 1.
+            # FAISS IndexFlatIP requires unit vectors for valid Cosine Similarity.
+            norm = np.linalg.norm(new_avg_np)
+            if norm > 0:
+                new_avg_np = new_avg_np / norm
+                
             new_avg = new_avg_np.tolist()
             new_count = current_count + 1
 
