@@ -17,15 +17,15 @@ class FaceRecognitionService:
         self.face_model.prepare(ctx_id=0, det_size=(640, 640))
         logger.info("Face recognition model initialized")
 
-    def extract_embedding(self, image_data: bytes) -> Optional[list[float]]:
+    def extract_embedding(self, image_data: bytes) -> Optional[dict]:
         """
-        Extract face embedding from image data
+        Extract face embedding and gender from image data
 
         Args:
             image_data: Binary image data
 
         Returns:
-            Face embedding as list of floats, or None if no face detected
+            Dict with embedding and gender, or None if no face detected
         """
         try:
             nparr = np.frombuffer(image_data, np.uint8)
@@ -41,8 +41,15 @@ class FaceRecognitionService:
                 logger.info("No face detected in image")
                 return None
 
-            embedding = faces[0].normed_embedding.astype("float32")
-            return embedding.tolist()
+            face = faces[0]
+            embedding = face.normed_embedding.astype("float32").tolist()
+            # InsightFace: 1 for Male, 0 for Female
+            gender = 'M' if face.gender == 1 else 'F'
+
+            return {
+                "embedding": embedding,
+                "gender": gender
+            }
 
         except Exception as e:
             logger.error(f"Error extracting embedding: {e}")

@@ -46,12 +46,13 @@ class PhotoService:
             raise HTTPException(status_code=400, detail="Invalid photo ID")
 
     @staticmethod
-    def get_recommendations(username: str) -> dict:
+    def get_recommendations(username: str, gender: Optional[str] = None) -> dict:
         """
         Get photo recommendations for a user
 
         Args:
             username: Username
+            gender: Optional gender filter ('M' or 'F')
 
         Returns:
             Recommended photos with metadata
@@ -75,11 +76,31 @@ class PhotoService:
 
         # Personalized recommendations if user has preferences
         if user_avg_embedding and faiss_service.faiss_index is not None:
+            # Request more candidates if filtering by gender to ensure we have enough after filtering
+            k = settings.faiss_recommendations_count * 3 if gender else settings.faiss_recommendations_count
+            
             recommendations = faiss_service.get_recommendations(
                 user_avg_embedding,
-                k=settings.faiss_recommendations_count,
+                k=k,
                 excluded_photo_ids=list(excluded_photo_ids)
             )
+            
+            # Filter by gender if requested
+            if gender:
+                filtered_recs = []
+                for rec in recommendations:
+                    # We need to check the gender from DB
+                    photo = photos_collection.find_one(
+                        {"_id": ObjectId(rec["photo_id"])},
+                        {"gender": 1}
+                    )
+                    # If gender matches or is not set (to be safe), include it
+                    # But user specifically asked for gender filter, so maybe strict?
+                    # Let's be strict if gender is present.
+                    if photo and photo.get("gender") == gender:
+                        filtered_recs.append(rec)
+                
+                recommendations = filtered_recs[:settings.faiss_recommendations_count]
 
             return {
                 "recommendations": recommendations,
@@ -96,6 +117,21 @@ class PhotoService:
                 photo_id for photo_id in faiss_service.photo_ids_list
                 if photo_id not in excluded_photo_ids
             ]
+            
+            # Filter by gender if requested
+            if gender:
+                # Query DB for IDs that match gender
+                # We convert available_photo_ids to ObjectIds for the query
+                available_oids = [ObjectId(pid) for pid in available_photo_ids]
+                
+                gender_photos = list(photos_collection.find(
+                    {
+                        "gender": gender, 
+                        "_id": {"$in": available_oids}
+                    },
+                    {"_id": 1}
+                ))
+                available_photo_ids = [str(p["_id"]) for p in gender_photos]
 
             if not available_photo_ids:
                 return {
@@ -149,10 +185,11 @@ class PhotoService:
             photos_to_process = list(photos_collection.find({
                 "$or": [
                     {"embedding": {"$exists": False}},
-                    {"embedding": None}
+                    {"embedding": None},
+                    {"gender": {"$exists": False}}
                 ]
             }))
-            logger.info(f"Found {len(photos_to_process)} photos without embeddings")
+            logger.info(f"Found {len(photos_to_process)} photos without embeddings or gender")
 
         total_photos = photos_collection.count_documents({})
 
@@ -165,15 +202,20 @@ class PhotoService:
 
         for photo in photos_to_process:
             try:
-                embedding = face_recognition_service.extract_embedding(photo["data"])
+                result = face_recognition_service.extract_embedding(photo["data"])
 
-                if embedding:
+                if result:
                     photos_collection.update_one(
                         {"_id": photo["_id"]},
-                        {"$set": {"embedding": embedding}}
+                        {
+                            "$set": {
+                                "embedding": result["embedding"],
+                                "gender": result["gender"]
+                            }
+                        }
                     )
                     processed_count += 1
-                    logger.info(f"Added embedding for photo {photo['_id']}")
+                    logger.info(f"Added embedding and gender for photo {photo['_id']}")
                 else:
                     # Delete photo if no face detected
                     photos_collection.delete_one({"_id": photo["_id"]})

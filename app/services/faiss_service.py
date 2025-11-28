@@ -32,14 +32,19 @@ class FAISSService:
 
         for photo in photos_without_embedding:
             try:
-                embedding = face_recognition_service.extract_embedding(photo["data"])
+                result = face_recognition_service.extract_embedding(photo["data"])
 
-                if embedding:
+                if result:
                     photos_collection.update_one(
                         {"_id": photo["_id"]},
-                        {"$set": {"embedding": embedding}}
+                        {
+                            "$set": {
+                                "embedding": result["embedding"],
+                                "gender": result["gender"]
+                            }
+                        }
                     )
-                    logger.info(f"Added embedding for photo {photo['_id']}")
+                    logger.info(f"Added embedding and gender for photo {photo['_id']}")
             except Exception as e:
                 logger.error(f"Error processing photo {photo['_id']}: {e}")
 

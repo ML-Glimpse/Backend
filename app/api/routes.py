@@ -1,4 +1,5 @@
 """API route definitions"""
+from typing import Optional
 from fastapi import APIRouter
 from fastapi.responses import Response
 
@@ -63,9 +64,9 @@ def search_embeddings(username: str, query: SearchIn):
 
 
 @router.get("/users/{username}/recommendations")
-def get_recommendations(username: str):
+def get_recommendations(username: str, gender: Optional[str] = None):
     """Get personalized photo recommendations for user"""
-    return photo_service.get_recommendations(username)
+    return photo_service.get_recommendations(username, gender)
 
 
 # Photo endpoints

@@ -50,18 +50,26 @@ class SwipeService:
             if "embedding" in photo:
                 embedding_list = photo["embedding"]
             else:
-                embedding_list = face_recognition_service.extract_embedding(photo["data"])
+                result = face_recognition_service.extract_embedding(photo["data"])
 
-                if embedding_list is None:
+                if result is None:
                     return {
                         "msg": "No face detected in the image",
                         "embedding_updated": False
                     }
+                
+                embedding_list = result["embedding"]
+                gender = result["gender"]
 
                 # Save embedding to photo
                 photos_collection.update_one(
                     {"_id": ObjectId(swipe.photo_id)},
-                    {"$set": {"embedding": embedding_list}}
+                    {
+                        "$set": {
+                            "embedding": embedding_list,
+                            "gender": gender
+                        }
+                    }
                 )
 
             # Record liked photo and update user's average embedding
