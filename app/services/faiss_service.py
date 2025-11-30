@@ -30,6 +30,7 @@ class FAISSService:
         photos_without_embedding = list(photos_collection.find({"embedding": {"$exists": False}}))
         logger.info(f"Found {len(photos_without_embedding)} photos without embeddings")
 
+        deleted_no_face_count = 0
         for photo in photos_without_embedding:
             try:
                 result = face_recognition_service.extract_embedding(photo["data"])
@@ -47,8 +48,16 @@ class FAISSService:
                         {"$set": update_data}
                     )
                     logger.info(f"Added embedding for photo {photo['_id']} (gender preserved: {'gender' in photo})")
+                else:
+                    # No face detected - delete photo
+                    photos_collection.delete_one({"_id": photo["_id"]})
+                    deleted_no_face_count += 1
+                    logger.warning(f"No face detected in photo {photo['_id']} - deleted")
             except Exception as e:
                 logger.error(f"Error processing photo {photo['_id']}: {e}")
+        
+        if deleted_no_face_count > 0:
+            logger.info(f"Deleted {deleted_no_face_count} photos with no face detected")
 
         # Build FAISS index
         photos_with_embedding = list(photos_collection.find({"embedding": {"$exists": True}}))
