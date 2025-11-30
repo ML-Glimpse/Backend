@@ -19,8 +19,7 @@ class Settings(BaseSettings):
     faiss_recommendations_count: int = 10
 
     # Recommendation Algorithm Settings
-    exploration_epsilon: float = 0.2  # 20% random exploration, 80% personalized
-    negative_feedback_weight: float = 0.05  # Weight for dislike embedding push-away
+    negative_feedback_weight: float = 0.02  # Weight for dislike embedding push-away
     
     # Dynamic Learning Rate Settings
     early_learning_decay_min: float = 0.5  # Fast learning for first 10 likes

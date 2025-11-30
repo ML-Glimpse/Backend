@@ -140,9 +140,9 @@ class FAISSService:
             excluded_photo_ids = []
 
         excluded_set = set(excluded_photo_ids)
-        logger.info(f"FAISS filtering {len(excluded_set)} excluded photos")
-        logger.info(f"Excluded set sample: {list(excluded_set)[:3]}")
-        logger.info(f"Photo IDs list sample: {self.photo_ids_list[:3]}")
+        logger.debug(f"FAISS filtering {len(excluded_set)} excluded photos")
+        logger.debug(f"Excluded set sample: {list(excluded_set)[:3]}")
+        logger.debug(f"Photo IDs list sample: {self.photo_ids_list[:3]}")
 
         query_embedding = np.array(user_avg_embedding, dtype="float32").reshape(1, -1)
 
@@ -152,40 +152,54 @@ class FAISSService:
         multiplier = max(3, min(10, 3 + (excluded_count // 20)))
         search_k = min(k * multiplier + excluded_count, self.faiss_index.ntotal)
 
-        logger.info(f"Requesting {search_k} candidates (k={k}, multiplier={multiplier}, excluded={excluded_count})")
+        logger.debug(f"Requesting {search_k} candidates (k={k}, multiplier={multiplier}, excluded={excluded_count})")
 
         similarities, indices = self.faiss_index.search(query_embedding, search_k)
 
-        recommendations = []
-        rank = 1
+        # Collect candidate photo IDs first (filter excluded)
+        candidate_photos = []
         filtered_count = 0
         for similarity, idx in zip(similarities[0], indices[0]):
-            if len(recommendations) >= k:
-                break
-
             if idx < len(self.photo_ids_list):
                 photo_id = self.photo_ids_list[idx]
 
                 # Skip excluded photos
                 if photo_id in excluded_set:
                     filtered_count += 1
-                    logger.info(f"Filtering out photo_id: {photo_id}")
                     continue
 
-                photo_info = photos_collection.find_one(
-                    {"_id": ObjectId(photo_id)},
-                    {"filename": 1, "content_type": 1}
-                )
+                candidate_photos.append({
+                    "photo_id": photo_id,
+                    "similarity": float(similarity)
+                })
+                
+                if len(candidate_photos) >= k:
+                    break
 
-                if photo_info:
-                    recommendations.append({
-                        "photo_id": photo_id,
-                        "filename": photo_info.get("filename", "unknown"),
-                        "content_type": photo_info.get("content_type", "image/jpeg"),
-                        "similarity": float(similarity),
-                        "rank": rank
-                    })
-                    rank += 1
+        # Batch query MongoDB for all candidate photos at once
+        candidate_ids = [ObjectId(p["photo_id"]) for p in candidate_photos]
+        photo_infos = {
+            str(p["_id"]): p 
+            for p in photos_collection.find(
+                {"_id": {"$in": candidate_ids}},
+                {"filename": 1, "content_type": 1}
+            )
+        }
+
+        # Build final recommendations with photo info
+        recommendations = []
+        for rank, candidate in enumerate(candidate_photos, 1):
+            photo_id = candidate["photo_id"]
+            photo_info = photo_infos.get(photo_id)
+            
+            if photo_info:
+                recommendations.append({
+                    "photo_id": photo_id,
+                    "filename": photo_info.get("filename", "unknown"),
+                    "content_type": photo_info.get("content_type", "image/jpeg"),
+                    "similarity": candidate["similarity"],
+                    "rank": rank
+                })
 
         logger.info(f"Filtered {filtered_count} photos, returning {len(recommendations)} recommendations")
         return recommendations
