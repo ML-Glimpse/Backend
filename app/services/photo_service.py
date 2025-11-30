@@ -1,5 +1,6 @@
 """Photo management and recommendation service"""
-import random
+import numpy as np
+import faiss
 from typing import Optional
 from bson import ObjectId
 from fastapi import HTTPException, UploadFile
@@ -128,7 +129,10 @@ class PhotoService:
     @staticmethod
     def get_recommendations(username: str, gender: Optional[str] = None) -> dict:
         """
-        Get photo recommendations for a user
+        Get photo recommendations for a user based on preference similarity:
+        1. Pre-filter available photos at database level
+        2. Use FAISS for similarity-based recommendations
+        3. Fall back to all available photos if user has no preferences yet
 
         Args:
             username: Username
@@ -152,97 +156,82 @@ class PhotoService:
         excluded_photo_ids = set(liked_photos + disliked_photos)
 
         logger.info(f"User {username}: {len(liked_photos)} liked, {len(disliked_photos)} disliked")
-        logger.info(f"Excluded IDs sample: {list(excluded_photo_ids)[:3]}")
 
-        # Personalized recommendations if user has preferences
-        if user_avg_embedding and faiss_service.faiss_index is not None:
-            # Request more candidates if filtering by gender to ensure we have enough after filtering
-            k = settings.faiss_recommendations_count * 3 if gender else settings.faiss_recommendations_count
-            
-            recommendations = faiss_service.get_recommendations(
-                user_avg_embedding,
-                k=k,
-                excluded_photo_ids=list(excluded_photo_ids)
-            )
-            
-            # Filter by gender if requested
-            if gender:
-                filtered_recs = []
-                for rec in recommendations:
-                    # We need to check the gender from DB
-                    photo = photos_collection.find_one(
-                        {"_id": ObjectId(rec["photo_id"])},
-                        {"gender": 1}
-                    )
-                    # If gender matches or is not set (to be safe), include it
-                    # But user specifically asked for gender filter, so maybe strict?
-                    # Let's be strict if gender is present.
-                    if photo and photo.get("gender") == gender:
-                        filtered_recs.append(rec)
-                
-                recommendations = filtered_recs[:settings.faiss_recommendations_count]
+        # === Pre-filter at database level ===
+        # Build query to get only available photos
+        query = {
+            "_id": {"$nin": [ObjectId(pid) for pid in excluded_photo_ids]},
+            "embedding": {"$exists": True}
+        }
+        if gender:
+            query["gender"] = gender
 
+        # Get available photos from database
+        available_photos = list(photos_collection.find(query, {"_id": 1, "embedding": 1, "filename": 1, "content_type": 1}))
+        
+        if not available_photos:
             return {
-                "recommendations": recommendations,
-                "recommendation_type": "personalized",
-                "based_on_embeddings": user_data.get("embedding_count", 0)
+                "recommendations": [],
+                "recommendation_type": "no_available_photos"
             }
+
+        logger.info(f"Found {len(available_photos)} available photos after pre-filtering")
+
+        recommendations = []
+        k = settings.faiss_recommendations_count
+        
+        # Build temporary FAISS index with only available photos
+        embeddings_list = [p["embedding"] for p in available_photos]
+        
+        # Check if we have valid embeddings
+        if not embeddings_list:
+            logger.warning("No valid embeddings found in available photos")
+            return {
+                "recommendations": [],
+                "recommendation_type": "no_valid_embeddings"
+            }
+        
+        available_embeddings = np.vstack(embeddings_list).astype("float32")
+        available_ids = [str(p["_id"]) for p in available_photos]
+        
+        # Create temporary index
+        temp_index = faiss.IndexFlatIP(settings.faiss_dimension)
+        temp_index.add(available_embeddings)
+        
+        # Determine query embedding
+        if user_avg_embedding:
+            # Use user's preference embedding
+            query_embedding = np.array(user_avg_embedding, dtype="float32").reshape(1, -1)
+            recommendation_type = "personalized"
+            logger.info(f"Using personalized recommendations based on {user_data.get('embedding_count', 0)} liked photos")
         else:
-            # Random recommendations for new users
-            if not faiss_service.photo_ids_list:
-                return {"recommendations": [], "recommendation_type": "no_photos"}
-
-            # Filter out already swiped photos
-            available_photo_ids = [
-                photo_id for photo_id in faiss_service.photo_ids_list
-                if photo_id not in excluded_photo_ids
-            ]
-            
-            # Filter by gender if requested
-            if gender:
-                # Query DB for IDs that match gender
-                # We convert available_photo_ids to ObjectIds for the query
-                available_oids = [ObjectId(pid) for pid in available_photo_ids]
-                
-                gender_photos = list(photos_collection.find(
-                    {
-                        "gender": gender, 
-                        "_id": {"$in": available_oids}
-                    },
-                    {"_id": 1}
-                ))
-                available_photo_ids = [str(p["_id"]) for p in gender_photos]
-
-            if not available_photo_ids:
-                return {
-                    "recommendations": [],
-                    "recommendation_type": "all_photos_swiped"
-                }
-
-            random_photo_ids = random.sample(
-                available_photo_ids,
-                min(settings.faiss_recommendations_count, len(available_photo_ids))
-            )
-
-            recommendations = []
-            for photo_id in random_photo_ids:
-                photo_info = photos_collection.find_one(
-                    {"_id": ObjectId(photo_id)},
-                    {"filename": 1, "content_type": 1}
-                )
-                if photo_info:
-                    recommendations.append({
-                        "photo_id": photo_id,
-                        "filename": photo_info.get("filename", "unknown"),
-                        "content_type": photo_info.get("content_type", "image/jpeg"),
-                        "similarity": None,
-                        "rank": None
-                    })
-
-            return {
-                "recommendations": recommendations,
-                "recommendation_type": "random" if not user_avg_embedding else "no_index"
-            }
+            # New user: use average of all available photos as query
+            # This will return photos in a neutral order based on their similarity to the dataset center
+            query_embedding = np.mean(available_embeddings, axis=0, keepdims=True).astype("float32")
+            recommendation_type = "new_user_neutral"
+            logger.info("New user: using dataset average as query embedding")
+        
+        # Search for similar photos
+        n_results = min(k, len(available_photos))
+        similarities, indices = temp_index.search(query_embedding, n_results)
+        
+        # Build recommendations
+        for rank, (similarity, idx) in enumerate(zip(similarities[0], indices[0]), start=1):
+            if idx < len(available_photos):
+                photo = available_photos[idx]
+                recommendations.append({
+                    "photo_id": str(photo["_id"]),
+                    "filename": photo.get("filename", "unknown"),
+                    "content_type": photo.get("content_type", "image/jpeg"),
+                    "similarity": float(similarity),
+                    "rank": rank
+                })
+        
+        return {
+            "recommendations": recommendations,
+            "recommendation_type": recommendation_type,
+            "based_on_embeddings": user_data.get("embedding_count", 0) if user_avg_embedding else 0
+        }
 
     @staticmethod
     def process_all_photo_embeddings(force: bool = False) -> dict:
