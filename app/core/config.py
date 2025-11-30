@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     # Recommendation Algorithm Settings
     negative_feedback_weight: float = 0.02  # Weight for dislike embedding push-away
+    super_like_weight_multiplier: float = 3.0  # Super like has 3x stronger effect on preferences
     
     # Dynamic Learning Rate Settings
     early_learning_decay_min: float = 0.5  # Fast learning for first 10 likes

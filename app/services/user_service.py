@@ -171,6 +171,80 @@ class UserService:
         }
 
     @staticmethod
+    def update_user_embedding_super_like(username: str, embedding: list[float]) -> dict:
+        """
+        Update user's average embedding with STRONGER weight for super liked photo
+        Super like has much stronger influence on preferences (3x by default)
+
+        Args:
+            username: Username
+            embedding: New face embedding from super liked photo
+
+        Returns:
+            Update status with new embedding count
+
+        Raises:
+            HTTPException: If user not found
+        """
+        user_data = users_collection.find_one({"username": username})
+        if not user_data:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        current_avg = user_data.get("avg_embedding")
+        current_count = user_data.get("embedding_count", 0)
+
+        if current_avg is None:
+            # First interaction is a super like - treat as normal like
+            new_avg = embedding
+            new_count = 1
+        else:
+            # Calculate dynamic decay rate
+            base_decay = UserService._calculate_dynamic_decay(current_count)
+            
+            # Super like: reduce decay significantly (stronger influence)
+            # If base_decay is 0.9, super_like_decay becomes ~0.7
+            # This means new photo contributes 30% instead of 10%
+            multiplier = settings.super_like_weight_multiplier
+            super_like_influence = (1.0 - base_decay) * multiplier
+            super_like_decay = 1.0 - super_like_influence
+            
+            # Ensure decay stays in valid range
+            super_like_decay = max(0.0, min(super_like_decay, 0.95))
+            
+            current_avg_np = np.array(current_avg)
+            new_embedding_np = np.array(embedding)
+
+            # Apply stronger weighting for super like
+            new_avg_np = (current_avg_np * super_like_decay) + (new_embedding_np * (1.0 - super_like_decay))
+            
+            # Re-normalize to unit vector
+            norm = np.linalg.norm(new_avg_np)
+            if norm > 0:
+                new_avg_np = new_avg_np / norm
+                
+            new_avg = new_avg_np.tolist()
+            new_count = current_count + 1
+
+        users_collection.update_one(
+            {"username": username},
+            {
+                "$set": {
+                    "avg_embedding": new_avg,
+                    "embedding_count": new_count
+                },
+                "$push": {"embeddings": embedding}
+            }
+        )
+
+        logger.info(f"Updated embedding with SUPER LIKE for user {username}, count: {new_count}")
+
+        return {
+            "msg": "Embedding updated with super like",
+            "embedding_count": new_count,
+            "super_like": True
+        }
+
+    @staticmethod
     def update_user_embedding_negative(username: str, embedding: list[float]) -> dict:
         """
         Update user's average embedding by pushing away from disliked photo

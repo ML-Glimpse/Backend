@@ -110,20 +110,32 @@ class SwipeService:
                     }
                 )
 
-            # Record liked photo and update user's average embedding
+            # Record liked photo
             users_collection.update_one(
                 {"username": swipe.username},
                 {"$addToSet": {"liked_photos": swipe.photo_id}}
             )
 
-            result = user_service.update_user_embedding(swipe.username, embedding_list)
-
-            return {
-                "msg": "Like recorded and embedding updated",
-                "embedding_updated": True,
-                "face_detected": True,
-                "embedding_count": result["embedding_count"]
-            }
+            # Determine if this is a super like
+            if swipe.action == "super_like":
+                # Super like: stronger embedding update
+                result = user_service.update_user_embedding_super_like(swipe.username, embedding_list)
+                return {
+                    "msg": "Super like recorded and embedding updated with stronger weight",
+                    "embedding_updated": True,
+                    "face_detected": True,
+                    "embedding_count": result["embedding_count"],
+                    "super_like": True
+                }
+            else:
+                # Normal like
+                result = user_service.update_user_embedding(swipe.username, embedding_list)
+                return {
+                    "msg": "Like recorded and embedding updated",
+                    "embedding_updated": True,
+                    "face_detected": True,
+                    "embedding_count": result["embedding_count"]
+                }
 
         except HTTPException:
             raise

@@ -1,6 +1,6 @@
 """Pydantic models for request/response validation"""
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Literal
 
 
 class User(BaseModel):
@@ -23,7 +23,7 @@ class SwipeAction(BaseModel):
     """Schema for user swipe actions"""
     username: str
     photo_id: str
-    action: str
+    action: Literal['like', 'pass', 'super_like']
 
 
 class PhotoRecommendation(BaseModel):
