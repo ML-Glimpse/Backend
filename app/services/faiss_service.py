@@ -35,16 +35,18 @@ class FAISSService:
                 result = face_recognition_service.extract_embedding(photo["data"])
 
                 if result:
+                    update_data = {"embedding": result["embedding"]}
+                    
+                    # Only set gender if it doesn't exist in the photo document
+                    # This preserves manually set gender values
+                    if "gender" not in photo:
+                        update_data["gender"] = result["gender"]
+                        
                     photos_collection.update_one(
                         {"_id": photo["_id"]},
-                        {
-                            "$set": {
-                                "embedding": result["embedding"],
-                                "gender": result["gender"]
-                            }
-                        }
+                        {"$set": update_data}
                     )
-                    logger.info(f"Added embedding and gender for photo {photo['_id']}")
+                    logger.info(f"Added embedding for photo {photo['_id']} (gender preserved: {'gender' in photo})")
             except Exception as e:
                 logger.error(f"Error processing photo {photo['_id']}: {e}")
 
