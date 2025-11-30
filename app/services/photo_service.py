@@ -2,7 +2,7 @@
 import random
 from typing import Optional
 from bson import ObjectId
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 import logging
 
 from app.core.database import photos_collection, users_collection
@@ -16,6 +16,86 @@ settings = get_settings()
 
 class PhotoService:
     """Service for photo management and recommendations"""
+
+    @staticmethod
+    async def upload_photo(file: UploadFile, gender: str) -> dict:
+        """
+        Upload a new photo to the database
+
+        Args:
+            file: Uploaded file
+            gender: User-selected gender ('M' or 'F')
+
+        Returns:
+            Upload status with photo ID
+
+        Raises:
+            HTTPException: If upload fails or invalid file
+        """
+        try:
+            # Validate gender
+            if gender not in ['M', 'F']:
+                raise HTTPException(status_code=400, detail="Gender must be 'M' or 'F'")
+
+            # Validate file type
+            if not file.content_type or not file.content_type.startswith('image/'):
+                raise HTTPException(status_code=400, detail="File must be an image")
+
+            # Read file data
+            file_data = await file.read()
+
+            if len(file_data) == 0:
+                raise HTTPException(status_code=400, detail="File is empty")
+
+            # Extract face embedding
+            result = face_recognition_service.extract_embedding(file_data)
+
+            if result is None:
+                # No face detected - still save but without embedding
+                photo_doc = {
+                    "filename": file.filename or "unknown",
+                    "content_type": file.content_type,
+                    "data": file_data,
+                    "gender": gender  # Use user-selected gender
+                }
+                insert_result = photos_collection.insert_one(photo_doc)
+                logger.warning(f"Photo uploaded without face detection: {insert_result.inserted_id}")
+                return {
+                    "msg": "Photo uploaded but no face detected",
+                    "photo_id": str(insert_result.inserted_id),
+                    "face_detected": False,
+                    "gender": gender
+                }
+
+            # Save photo with embedding and user-selected gender
+            photo_doc = {
+                "filename": file.filename or "unknown",
+                "content_type": file.content_type,
+                "data": file_data,
+                "embedding": result["embedding"],
+                "gender": gender  # Use user-selected gender instead of detected
+            }
+
+            insert_result = photos_collection.insert_one(photo_doc)
+            photo_id = str(insert_result.inserted_id)
+
+            # Rebuild FAISS index to include new photo
+            faiss_service.initialize_index()
+
+            logger.info(f"Photo uploaded successfully: {photo_id}, gender: {gender}")
+
+            return {
+                "msg": "Photo uploaded successfully",
+                "photo_id": photo_id,
+                "face_detected": True,
+                "gender": gender
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error uploading photo: {e}")
+            raise HTTPException(status_code=500, detail=f"Error uploading photo: {str(e)}")
 
     @staticmethod
     def get_photo(photo_id: str) -> dict:

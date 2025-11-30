@@ -1,6 +1,6 @@
 """API route definitions"""
 from typing import Optional
-from fastapi import APIRouter
+from fastapi import APIRouter, UploadFile, File, Form
 from fastapi.responses import Response
 
 from app.models.schemas import User, EmbeddingIn, SearchIn, SwipeAction
@@ -78,6 +78,12 @@ def get_photo(photo_id: str):
         content=photo_data["data"],
         media_type=photo_data["content_type"]
     )
+
+
+@router.post("/photos/upload")
+async def upload_photo(file: UploadFile = File(...), gender: str = Form(...)):
+    """Upload a new photo to the database"""
+    return await photo_service.upload_photo(file, gender)
 
 
 # Swipe endpoints
