@@ -36,14 +36,52 @@ class SwipeService:
             if not photo:
                 raise HTTPException(status_code=404, detail="Photo not found")
 
-            # Handle "pass" action
+            # Handle "pass" action with negative feedback
             if swipe.action != "like":
                 # Record disliked photo
                 users_collection.update_one(
                     {"username": swipe.username},
                     {"$addToSet": {"disliked_photos": swipe.photo_id}}
                 )
-                return {"msg": "Pass recorded", "embedding_updated": False}
+                
+                # Apply negative feedback to user preferences
+                # Get or extract embedding
+                if "embedding" in photo:
+                    embedding_list = photo["embedding"]
+                else:
+                    result = face_recognition_service.extract_embedding(photo["data"])
+                    if result:
+                        embedding_list = result["embedding"]
+                        gender = result["gender"]
+                        
+                        # Save embedding to photo
+                        photos_collection.update_one(
+                            {"_id": ObjectId(swipe.photo_id)},
+                            {
+                                "$set": {
+                                    "embedding": embedding_list,
+                                    "gender": gender
+                                }
+                            }
+                        )
+                    else:
+                        # No face detected, just record the dislike
+                        return {
+                            "msg": "Pass recorded (no face detected)",
+                            "embedding_updated": False
+                        }
+                
+                # Apply negative feedback
+                negative_result = user_service.update_user_embedding_negative(
+                    swipe.username, 
+                    embedding_list
+                )
+                
+                return {
+                    "msg": "Pass recorded with negative feedback",
+                    "embedding_updated": negative_result.get("applied", False),
+                    "negative_feedback_applied": True
+                }
 
             # Handle "like" action
             # Get or extract embedding

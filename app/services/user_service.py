@@ -7,13 +7,10 @@ import logging
 from app.core.database import users_collection
 from app.core.security import hash_password, verify_password
 from app.models.schemas import User
+from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
-
-# --- ML CONFIGURATION ---
-# 0.9 means history counts for 90%, new photo counts for 10%.
-# Lower this number (e.g., 0.8) if you want the user's preference to change FASTER.
-HISTORY_DECAY = 0.9
+settings = get_settings()
 
 class UserService:
     """Service for user management operations"""
@@ -74,10 +71,46 @@ class UserService:
         raise HTTPException(status_code=400, detail="Invalid credentials")
 
     @staticmethod
+    def _calculate_dynamic_decay(embedding_count: int) -> float:
+        """
+        Calculate dynamic decay rate based on user's embedding count
+        
+        Early stage (0-10 likes): Fast learning (0.5-0.7)
+        Mid stage (10-50 likes): Gradual stabilization (0.7-0.9)
+        Stable stage (50+ likes): High stability (0.9)
+        
+        Args:
+            embedding_count: Current number of liked embeddings
+            
+        Returns:
+            Decay rate (0-1)
+        """
+        if embedding_count < settings.early_learning_threshold:
+            # Early learning: 0.5 -> 0.7
+            progress = embedding_count / settings.early_learning_threshold
+            decay = settings.early_learning_decay_min + progress * (
+                settings.early_learning_decay_max - settings.early_learning_decay_min
+            )
+        elif embedding_count < settings.stable_learning_threshold:
+            # Mid learning: 0.7 -> 0.9
+            progress = (embedding_count - settings.early_learning_threshold) / (
+                settings.stable_learning_threshold - settings.early_learning_threshold
+            )
+            decay = settings.early_learning_decay_max + progress * (
+                settings.mid_learning_decay - settings.early_learning_decay_max
+            )
+        else:
+            # Stable learning: 0.9
+            decay = settings.mid_learning_decay
+        
+        logger.debug(f"Embedding count: {embedding_count}, decay rate: {decay:.3f}")
+        return decay
+
+    @staticmethod
     def update_user_embedding(username: str, embedding: list[float]) -> dict:
         """
         Update user's average embedding with a new liked photo embedding
-        Update user's average embedding with a discount factor (Exponential Moving Average)
+        Uses dynamic decay rate based on user's experience level
 
         Args:
             username: Username
@@ -100,16 +133,18 @@ class UserService:
             new_avg = embedding
             new_count = 1
         else:
+            # Calculate dynamic decay rate
+            decay = UserService._calculate_dynamic_decay(current_count)
+            
             current_avg_np = np.array(current_avg)
             new_embedding_np = np.array(embedding)
 
-            # new_avg_np = (current_avg_np * current_count + new_embedding_np) / (current_count + 1)
-            # --- NEW ALGORITHM: Exponential Moving Average ---
+            # Exponential Moving Average with dynamic decay
             # NewAvg = (OldAvg * Decay) + (NewPhoto * (1 - Decay))
-            new_avg_np = (current_avg_np * HISTORY_DECAY) + (new_embedding_np * (1.0 - HISTORY_DECAY))
-            # CRITICAL ML STEP: Re-normalize!
-            # When you average two unit vectors, the result is shorter than length 1.
-            # FAISS IndexFlatIP requires unit vectors for valid Cosine Similarity.
+            new_avg_np = (current_avg_np * decay) + (new_embedding_np * (1.0 - decay))
+            
+            # CRITICAL: Re-normalize to unit vector
+            # FAISS IndexFlatIP requires unit vectors for valid Cosine Similarity
             norm = np.linalg.norm(new_avg_np)
             if norm > 0:
                 new_avg_np = new_avg_np / norm
@@ -133,6 +168,63 @@ class UserService:
         return {
             "msg": "Embedding updated",
             "embedding_count": new_count
+        }
+
+    @staticmethod
+    def update_user_embedding_negative(username: str, embedding: list[float]) -> dict:
+        """
+        Update user's average embedding by pushing away from disliked photo
+        Uses negative feedback to refine user preferences
+
+        Args:
+            username: Username
+            embedding: Face embedding from disliked photo
+
+        Returns:
+            Update status
+
+        Raises:
+            HTTPException: If user not found
+        """
+        user_data = users_collection.find_one({"username": username})
+        if not user_data:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        current_avg = user_data.get("avg_embedding")
+        
+        # Only apply negative feedback if user has established preferences
+        if current_avg is None:
+            logger.info(f"User {username} has no preferences yet, skipping negative feedback")
+            return {"msg": "No preferences to update", "applied": False}
+        
+        current_avg_np = np.array(current_avg)
+        disliked_embedding_np = np.array(embedding)
+        
+        # Push away from disliked embedding
+        # new_avg = current_avg - (disliked * weight)
+        new_avg_np = current_avg_np - (disliked_embedding_np * settings.negative_feedback_weight)
+        
+        # Re-normalize to unit vector
+        norm = np.linalg.norm(new_avg_np)
+        if norm > 0:
+            new_avg_np = new_avg_np / norm
+        else:
+            # If resulting vector is zero, keep original
+            logger.warning(f"Negative feedback resulted in zero vector for {username}, keeping original")
+            return {"msg": "Negative feedback skipped (zero vector)", "applied": False}
+        
+        new_avg = new_avg_np.tolist()
+        
+        users_collection.update_one(
+            {"username": username},
+            {"$set": {"avg_embedding": new_avg}}
+        )
+        
+        logger.info(f"Applied negative feedback for user {username}")
+        
+        return {
+            "msg": "Negative feedback applied",
+            "applied": True
         }
 
     @staticmethod
