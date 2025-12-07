@@ -37,13 +37,13 @@ class SwipeService:
                 raise HTTPException(status_code=404, detail="Photo not found")
 
             # Handle "pass" action with negative feedback
-            if swipe.action != "like":
+            if swipe.action == "pass":
                 # Record disliked photo
                 users_collection.update_one(
                     {"username": swipe.username},
                     {"$addToSet": {"disliked_photos": swipe.photo_id}}
                 )
-                
+
                 # Apply negative feedback to user preferences
                 # Get or extract embedding
                 if "embedding" in photo:
@@ -53,7 +53,7 @@ class SwipeService:
                     if result:
                         embedding_list = result["embedding"]
                         gender = result["gender"]
-                        
+
                         # Save embedding to photo
                         photos_collection.update_one(
                             {"_id": ObjectId(swipe.photo_id)},
@@ -70,20 +70,20 @@ class SwipeService:
                             "msg": "Pass recorded (no face detected)",
                             "embedding_updated": False
                         }
-                
+
                 # Apply negative feedback
                 negative_result = user_service.update_user_embedding_negative(
-                    swipe.username, 
+                    swipe.username,
                     embedding_list
                 )
-                
+
                 return {
                     "msg": "Pass recorded with negative feedback",
                     "embedding_updated": negative_result.get("applied", False),
                     "negative_feedback_applied": True
                 }
 
-            # Handle "like" action
+            # Handle "like" and "super_like" actions
             # Get or extract embedding
             if "embedding" in photo:
                 embedding_list = photo["embedding"]
