@@ -4,48 +4,51 @@ A FastAPI-based machine learning backend for photo recommendation using face rec
 
 ## Features
 
-- 🔐 User authentication (registration/login)
-- 📸 Face detection and embedding extraction
-- 🎯 Personalized photo recommendations using FAISS
-- 👍 Swipe-based preference learning (like/pass tracking)
-- 🚫 Smart filtering to avoid showing previously swiped photos
-- 🔄 Batch photo processing with automatic face detection
-- 🧹 User preference management (view and clear preferences)
-- ⚡ Fast similarity search with vector indexing
+- User authentication (registration/login)
+- Face detection and embedding extraction with gender detection
+- Personalized photo recommendations using FAISS similarity search
+- Swipe-based preference learning (like/pass/super_like)
+- Dynamic learning rate that adapts based on user interaction history
+- Negative feedback learning from passed photos
+- Super like feature with stronger preference weighting
+- Smart filtering to avoid showing previously swiped photos
+- Gender-based photo filtering
+- Batch photo processing with automatic face detection
+- User preference management (view and clear preferences)
 
 ## Project Structure
 
 ```
 Backend/
 ├── app/
-│   ├── api/              # API routes and endpoints
-│   │   ├── routes.py     # Main route definitions
+│   ├── api/
+│   │   ├── routes.py         # API route definitions
 │   │   └── __init__.py
-│   ├── core/             # Core configuration
-│   │   ├── config.py     # Settings and environment variables
-│   │   ├── database.py   # MongoDB connection
-│   │   ├── security.py   # Password hashing utilities
+│   ├── core/
+│   │   ├── config.py         # Settings and environment variables
+│   │   ├── database.py       # MongoDB connection
+│   │   ├── security.py       # Password hashing utilities
 │   │   └── __init__.py
-│   ├── models/           # Data models
-│   │   ├── schemas.py    # Pydantic models
+│   ├── models/
+│   │   ├── schemas.py        # Pydantic models
 │   │   └── __init__.py
-│   ├── services/         # Business logic
-│   │   ├── face_recognition.py  # Face detection service
-│   │   ├── faiss_service.py     # FAISS indexing
-│   │   ├── user_service.py      # User management
-│   │   ├── photo_service.py     # Photo operations
-│   │   ├── swipe_service.py     # Swipe handling
+│   ├── services/
+│   │   ├── face_recognition.py   # Face detection service
+│   │   ├── faiss_service.py      # FAISS indexing
+│   │   ├── user_service.py       # User management
+│   │   ├── photo_service.py      # Photo operations
+│   │   ├── swipe_service.py      # Swipe handling
 │   │   └── __init__.py
-│   ├── utils/            # Helper functions
-│   │   ├── search.py     # Search utilities
+│   ├── utils/
+│   │   ├── search.py         # Search utilities
 │   │   └── __init__.py
-│   ├── main.py           # Application entry point
+│   ├── main.py               # Application entry point
 │   └── __init__.py
-├── .env.example          # Example environment variables
-├── .gitignore           # Git ignore rules
-├── pyproject.toml       # Project configuration
-├── requirements.txt     # Python dependencies
-└── README.md           # This file
+├── .env.example              # Example environment variables
+├── .gitignore                # Git ignore rules
+├── pyproject.toml            # Project configuration
+├── requirements.txt          # Python dependencies
+└── README.md                 # This file
 ```
 
 ## Installation
@@ -96,12 +99,26 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8010
 Create a `.env` file with the following variables:
 
 ```env
+# Required
 MONGO_URI=mongodb://localhost:27017
+
+# Optional (defaults shown)
 MONGO_DB_NAME=ml
 APP_NAME=ML Backend API
 DEBUG=false
 FAISS_DIMENSION=512
 FAISS_RECOMMENDATIONS_COUNT=10
+
+# Recommendation Algorithm Settings
+NEGATIVE_FEEDBACK_WEIGHT=0.02
+SUPER_LIKE_WEIGHT_MULTIPLIER=3.0
+
+# Dynamic Learning Rate Settings
+EARLY_LEARNING_DECAY_MIN=0.5
+EARLY_LEARNING_DECAY_MAX=0.7
+MID_LEARNING_DECAY=0.9
+EARLY_LEARNING_THRESHOLD=10
+STABLE_LEARNING_THRESHOLD=50
 ```
 
 ## API Endpoints
@@ -128,12 +145,7 @@ Register a new user account.
 
 **Error Cases:**
 - `400 Bad Request` - User already exists
-- `422 Unprocessable Entity` - Invalid request body (username too short, password too short)
-
-**Implementation Details:**
-- Passwords are hashed using bcrypt before storage
-- Creates a new user document with empty embeddings array and null avg_embedding
-- Initializes embedding_count to 0
+- `422 Unprocessable Entity` - Invalid request body
 
 ---
 
@@ -156,11 +168,7 @@ Authenticate an existing user.
 ```
 
 **Error Cases:**
-- `400 Bad Request` - Invalid credentials (user not found or password incorrect)
-
-**Implementation Details:**
-- Uses bcrypt to verify password against stored hash
-- Does not issue JWT tokens (stateless authentication not implemented)
+- `400 Bad Request` - Invalid credentials
 
 ---
 
@@ -172,14 +180,17 @@ Get personalized photo recommendations based on user's preference history.
 **Path Parameters:**
 - `username` - The username to get recommendations for
 
+**Query Parameters:**
+- `gender` (optional) - Filter by gender ('M' or 'F')
+
 **Response (Personalized):**
 ```json
 {
   "recommendations": [
     {
-      "photo_id": "string (MongoDB ObjectId)",
+      "photo_id": "string",
       "filename": "string",
-      "content_type": "string (e.g., image/jpeg)",
+      "content_type": "string",
       "similarity": 0.95,
       "rank": 1
     }
@@ -189,41 +200,25 @@ Get personalized photo recommendations based on user's preference history.
 }
 ```
 
-**Response (Random - New User):**
+**Response (New User):**
 ```json
 {
-  "recommendations": [
-    {
-      "photo_id": "string",
-      "filename": "string",
-      "content_type": "string",
-      "similarity": null,
-      "rank": null
-    }
-  ],
-  "recommendation_type": "random"
+  "recommendations": [...],
+  "recommendation_type": "new_user_neutral",
+  "based_on_embeddings": 0
 }
 ```
 
-**Error Cases:**
-- `404 Not Found` - User not found
-
 **Implementation Details:**
-- If user has avg_embedding (has liked photos), uses FAISS index to find top-K similar photos
-- Similarity is calculated using inner product (cosine similarity on normalized embeddings)
-- New users without preferences receive random photo recommendations
-- Automatically excludes photos the user has already swiped (both liked and disliked)
-- Returns "all_photos_swiped" if user has swiped on all available photos
-- Number of recommendations controlled by `FAISS_RECOMMENDATIONS_COUNT` env variable (default: 10)
-- See `app/services/photo_service.py:48`
+- Personalized users: FAISS similarity search using user's average embedding
+- New users: Uses dataset average as neutral query vector
+- Pre-filters photos at database level (gender, excluded photos)
+- Automatically excludes photos the user has already swiped
 
 ---
 
 #### `GET /users/{username}/embeddings`
 Retrieve all face embeddings the user has liked.
-
-**Path Parameters:**
-- `username` - The username to get embeddings for
 
 **Response:**
 ```json
@@ -235,21 +230,10 @@ Retrieve all face embeddings the user has liked.
 }
 ```
 
-**Error Cases:**
-- `404 Not Found` - User not found
-
-**Implementation Details:**
-- Returns raw 512-dimensional face embedding vectors
-- Each embedding corresponds to a liked photo
-- Used primarily for debugging and analysis
-
 ---
 
 #### `GET /users/{username}/avg_embedding`
 Get the user's average face embedding (preference profile).
-
-**Path Parameters:**
-- `username` - The username to get average embedding for
 
 **Response:**
 ```json
@@ -259,56 +243,23 @@ Get the user's average face embedding (preference profile).
 }
 ```
 
-**Response (New User):**
-```json
-{
-  "avg_embedding": null,
-  "embedding_count": 0
-}
-```
-
-**Error Cases:**
-- `404 Not Found` - User not found
-
-**Implementation Details:**
-- The avg_embedding is calculated incrementally: `new_avg = (current_avg * count + new_embedding) / (count + 1)`
-- This vector represents the user's aggregated facial preferences
-- Used as the query vector for FAISS similarity search
-- See `app/services/user_service.py:71`
-
 ---
 
 #### `GET /users/{username}/swiped_photos`
 Get all photos the user has swiped (both liked and disliked).
 
-**Path Parameters:**
-- `username` - The username to get swiped photos for
-
 **Response:**
 ```json
 {
-  "liked_photos": ["photo_id_1", "photo_id_2", ...],
-  "disliked_photos": ["photo_id_3", "photo_id_4", ...]
+  "liked_photos": ["photo_id_1", "photo_id_2"],
+  "disliked_photos": ["photo_id_3", "photo_id_4"]
 }
 ```
-
-**Error Cases:**
-- `404 Not Found` - User not found
-
-**Implementation Details:**
-- Returns arrays of photo IDs that the user has swiped on
-- liked_photos contains IDs of photos the user swiped right on
-- disliked_photos contains IDs of photos the user passed (swiped left)
-- These photos are excluded from future recommendations
-- See `app/services/user_service.py:153`
 
 ---
 
 #### `DELETE /users/{username}/preferences`
 Clear all user preferences including embeddings and swipe history.
-
-**Path Parameters:**
-- `username` - The username to clear preferences for
 
 **Response:**
 ```json
@@ -317,25 +268,10 @@ Clear all user preferences including embeddings and swipe history.
 }
 ```
 
-**Error Cases:**
-- `404 Not Found` - User not found
-
-**Implementation Details:**
-- Resets avg_embedding to null
-- Clears all embeddings array
-- Resets embedding_count to 0
-- Clears both liked_photos and disliked_photos arrays
-- User will receive random recommendations after clearing
-- Useful for resetting a user's preference profile
-- See `app/services/user_service.py:179`
-
 ---
 
 #### `POST /users/{username}/embeddings`
-Manually add an embedding to a user's collection (for testing/admin purposes).
-
-**Path Parameters:**
-- `username` - The username to add embedding to
+Manually add an embedding to a user's collection.
 
 **Request Body:**
 ```json
@@ -351,21 +287,10 @@ Manually add an embedding to a user's collection (for testing/admin purposes).
 }
 ```
 
-**Error Cases:**
-- `404 Not Found` - User not found
-
-**Implementation Details:**
-- Adds embedding to the embeddings array but does NOT update avg_embedding
-- This is different from the swipe "like" action which updates the average
-- Primarily used for testing and debugging
-
 ---
 
 #### `POST /users/{username}/search`
 Search the user's liked photo embeddings using FAISS.
-
-**Path Parameters:**
-- `username` - The username to search embeddings for
 
 **Request Body:**
 ```json
@@ -387,61 +312,56 @@ Search the user's liked photo embeddings using FAISS.
 }
 ```
 
-**Error Cases:**
-- `404 Not Found` - User not found
-- `400 Bad Request` - No embeddings to search
-
-**Implementation Details:**
-- Creates a temporary FAISS index from user's liked embeddings
-- Searches for embeddings similar to the query vector
-- Used for analyzing user preferences and finding similar liked photos
-
 ---
 
 ### Photos
 
 #### `GET /photos/{photo_id}`
-Retrieve a photo's data including binary content.
+Retrieve a photo's binary data.
 
-**Path Parameters:**
-- `photo_id` - MongoDB ObjectId of the photo
+**Response:** Binary image data with appropriate content-type header.
+
+---
+
+#### `POST /photos/upload`
+Upload a new photo to the database.
+
+**Form Data:**
+- `file` - Image file (required)
+- `gender` - Gender classification: 'M' or 'F' (required)
 
 **Response:**
 ```json
 {
+  "msg": "Photo uploaded successfully",
   "photo_id": "string",
-  "filename": "string",
-  "content_type": "string",
-  "data": "binary data"
+  "face_detected": true,
+  "gender": "M"
 }
 ```
 
-**Error Cases:**
-- `404 Not Found` - Photo not found
-- `400 Bad Request` - Invalid photo ID format
-
 **Implementation Details:**
-- Returns the raw binary image data stored in MongoDB
-- Photos also contain cached embeddings if faces have been detected
-- Binary data is stored directly in MongoDB (suitable for small-medium datasets)
+- Automatically extracts face embedding if face is detected
+- Rebuilds FAISS index after successful upload
+- Photos without faces are saved but won't appear in recommendations
 
 ---
 
 ### Interactions
 
 #### `POST /swipe`
-Process a user's swipe action on a photo (like or pass).
+Process a user's swipe action on a photo.
 
 **Request Body:**
 ```json
 {
   "username": "string",
-  "photo_id": "string (MongoDB ObjectId)",
-  "action": "like" | "pass"
+  "photo_id": "string",
+  "action": "like" | "pass" | "super_like"
 }
 ```
 
-**Response (Like with Face Detected):**
+**Response (Like):**
 ```json
 {
   "msg": "Like recorded and embedding updated",
@@ -451,34 +371,30 @@ Process a user's swipe action on a photo (like or pass).
 }
 ```
 
+**Response (Super Like):**
+```json
+{
+  "msg": "Super like recorded and embedding updated with stronger weight",
+  "embedding_updated": true,
+  "face_detected": true,
+  "embedding_count": 16,
+  "super_like": true
+}
+```
+
 **Response (Pass):**
 ```json
 {
-  "msg": "Pass recorded",
-  "embedding_updated": false
+  "msg": "Pass recorded with negative feedback",
+  "embedding_updated": true,
+  "negative_feedback_applied": true
 }
 ```
-
-**Response (No Face Detected):**
-```json
-{
-  "msg": "No face detected in the image",
-  "embedding_updated": false
-}
-```
-
-**Error Cases:**
-- `404 Not Found` - Photo or user not found
-- `500 Internal Server Error` - Face detection/processing error
 
 **Implementation Details:**
-- "pass" actions are logged but do not update user preferences
-- "like" actions trigger face embedding extraction (if not cached)
-- Face embeddings are extracted using InsightFace (ArcFace model)
-- User's avg_embedding is updated incrementally with the new face embedding
-- If photo lacks cached embedding, it's computed on-the-fly and saved to photo document
-- This is the primary mechanism for learning user preferences
-- See `app/services/swipe_service.py:18`
+- `like`: Updates user's average embedding with dynamic learning rate
+- `super_like`: Updates with 3x stronger weight (configurable)
+- `pass`: Applies negative feedback, pushing preferences away from the photo
 
 ---
 
@@ -488,9 +404,7 @@ Process a user's swipe action on a photo (like or pass).
 Process all photos in the database and extract face embeddings.
 
 **Query Parameters:**
-- `force` (optional, default: false) - If true, re-process all photos even if they already have embeddings
-
-**Request Body:** None
+- `force` (optional, default: false) - Re-process all photos
 
 **Response:**
 ```json
@@ -506,24 +420,14 @@ Process all photos in the database and extract face embeddings.
 }
 ```
 
-**Error Cases:**
-- `500 Internal Server Error` - Error during processing
-
 **Implementation Details:**
-- By default, only processes photos without embeddings
-- With `force=true`, re-processes all photos regardless of existing embeddings
-- Uses InsightFace to detect faces and extract 512-dim embeddings
-- Photos with no face detected are automatically deleted from the database
-- Useful for batch processing newly uploaded photos
-- Should call `/admin/rebuild_index` after processing to update FAISS index
-- See `app/services/photo_service.py:132`
+- Photos without detected faces are automatically deleted
+- Call `/admin/rebuild_index` after processing to update FAISS index
 
 ---
 
 #### `POST /admin/rebuild_index`
-Rebuild the FAISS similarity search index from all photos in the database.
-
-**Request Body:** None
+Rebuild the FAISS similarity search index.
 
 **Response:**
 ```json
@@ -533,23 +437,10 @@ Rebuild the FAISS similarity search index from all photos in the database.
 }
 ```
 
-**Error Cases:**
-- `500 Internal Server Error` - Error during index rebuild
-
-**Implementation Details:**
-- Loads all photos from MongoDB and extracts embeddings if missing
-- Creates a new FAISS IndexFlatIP (inner product) index with all photo embeddings
-- Index is in-memory only and lost on server restart
-- Use this endpoint after uploading new photos to include them in recommendations
-- Index is automatically built on application startup
-- See `app/services/faiss_service.py` for indexing logic
-
 ---
 
 #### `GET /admin/index_status`
-Get the current status and statistics of the FAISS index.
-
-**Request Body:** None
+Get the current status of the FAISS index.
 
 **Response:**
 ```json
@@ -560,42 +451,22 @@ Get the current status and statistics of the FAISS index.
 }
 ```
 
-**Implementation Details:**
-- Shows whether FAISS index is ready to serve recommendations
-- total_photos_indexed indicates how many photos are searchable
-- index_dimension should always be 512 (InsightFace embedding size)
-- Use this to verify the index is properly initialized after startup or rebuild
-
 ---
 
 #### `GET /admin/debug/{username}`
 Debug endpoint to inspect user's swipe history and FAISS index state.
 
-**Path Parameters:**
-- `username` - The username to debug
-
 **Response:**
 ```json
 {
-  "liked_photos": ["photo_id_1", "photo_id_2", ...],
-  "liked_types": ["str", "str", "str"],
-  "disliked_photos": ["photo_id_3", "photo_id_4", ...],
-  "disliked_types": ["str", "str", "str"],
-  "faiss_photo_ids_sample": ["photo_id_5", "photo_id_6", "photo_id_7"],
-  "faiss_types": ["str", "str", "str"]
+  "liked_photos": ["photo_id_1", "photo_id_2"],
+  "liked_types": ["str", "str"],
+  "disliked_photos": ["photo_id_3"],
+  "disliked_types": ["str"],
+  "faiss_photo_ids_sample": ["photo_id_5", "photo_id_6"],
+  "faiss_types": ["str", "str"]
 }
 ```
-
-**Error Cases:**
-- `404 Not Found` - User not found
-
-**Implementation Details:**
-- Returns user's liked and disliked photo arrays
-- Shows data types of photo IDs for debugging type mismatches
-- Provides sample of photo IDs in the FAISS index
-- Useful for debugging recommendation filtering issues
-- Helps verify photo ID consistency between user records and FAISS index
-- See `app/api/routes.py:116`
 
 ---
 
@@ -603,8 +474,6 @@ Debug endpoint to inspect user's swipe history and FAISS index state.
 
 #### `GET /`
 Basic health check endpoint.
-
-**Request Body:** None
 
 **Response:**
 ```json
@@ -614,16 +483,10 @@ Basic health check endpoint.
 }
 ```
 
-**Implementation Details:**
-- Always returns 200 OK if the server is running
-- Used for basic liveness checks
-
 ---
 
 #### `GET /health`
 Detailed health check including service status.
-
-**Request Body:** None
 
 **Response:**
 ```json
@@ -637,57 +500,63 @@ Detailed health check including service status.
 }
 ```
 
-**Implementation Details:**
-- Provides comprehensive health information
-- Includes FAISS index status for verifying recommendation service readiness
-- Used for readiness checks in production deployments
-
-## Development
-
-### Code Formatting
-
-```bash
-pip install -e ".[dev]"
-black app/
-ruff check app/
-```
-
-### Type Checking
-
-```bash
-mypy app/
-```
-
 ## Architecture
 
 ### Key Components
 
-1. **Face Recognition Service**: Uses InsightFace for face detection and embedding extraction
-2. **FAISS Service**: Manages vector similarity search index for fast recommendations
-3. **User Service**: Handles user registration, authentication, and preference management
-4. **Photo Service**: Manages photo storage and retrieval
+1. **Face Recognition Service**: Uses InsightFace for face detection and 512-dimensional embedding extraction with gender detection
+2. **FAISS Service**: Manages vector similarity search index using IndexFlatIP (inner product)
+3. **User Service**: Handles user registration, authentication, and preference management with dynamic learning rates
+4. **Photo Service**: Manages photo storage, retrieval, and recommendations
 5. **Swipe Service**: Processes user interactions and updates preferences
 
-### Recommendation Algorithm
+### Dynamic Learning Rate
 
-1. User swipes on a photo (right for like, left for pass)
-2. Swipe action is recorded in user's liked_photos or disliked_photos array
-3. If liked, face embedding is extracted from the photo
-4. User's average embedding is updated incrementally with the liked photo's embedding
-5. FAISS index searches for similar photos based on user's preferences
-6. Previously swiped photos are excluded from recommendations
-7. Top-K most similar photos are returned as recommendations
+The system adapts its learning rate based on user interaction history:
+
+- **Early stage (0-10 likes)**: Fast learning with decay 0.5-0.7
+- **Mid stage (10-50 likes)**: Gradual stabilization with decay up to 0.9
+- **Stable stage (50+ likes)**: High stability with decay 0.9
+
+This ensures:
+- New users' preferences are established quickly
+- Established users' preferences remain stable
+- Preferences can still adapt over time
+
+## MongoDB Schema
+
+### users collection
+```javascript
+{
+  "_id": ObjectId,
+  "username": string,
+  "hashed_password": string,
+  "embeddings": [[float]],        // All liked photo embeddings
+  "avg_embedding": [float] | null, // Running average (512-dim)
+  "embedding_count": int,          // Number of likes
+  "liked_photos": [string],        // Photo IDs user has liked
+  "disliked_photos": [string]      // Photo IDs user has passed
+}
+```
+
+### photos collection
+```javascript
+{
+  "_id": ObjectId,
+  "filename": string,
+  "content_type": string,
+  "data": Binary,              // Binary image data
+  "embedding": [float] | null, // 512-dim face embedding
+  "gender": string             // 'M' or 'F'
+}
+```
 
 ## Technologies
 
 - **FastAPI**: Modern, fast web framework
 - **MongoDB**: Document database for user and photo data
-- **InsightFace**: State-of-the-art face recognition
+- **InsightFace**: State-of-the-art face recognition (ArcFace model)
 - **FAISS**: Fast similarity search library by Meta
 - **OpenCV**: Image processing
 - **Pydantic**: Data validation
 - **Passlib**: Password hashing
-
-## License
-
-MIT License

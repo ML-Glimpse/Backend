@@ -12,7 +12,9 @@
       "Bash(where cl)",
       "Bash(./Scripts/python.exe -m pip install:*)",
       "Bash(curl:*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(tree:*)",
+      "Bash(dir:*)"
     ],
     "deny": [],
     "ask": []
