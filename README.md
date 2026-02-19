@@ -2,6 +2,11 @@
 
 A FastAPI-based machine learning backend for photo recommendation using face recognition and FAISS vector similarity search.
 
+## Architecture
+
+![Architecture](image.png)
+
+
 ## Features
 
 - User authentication (registration/login)
@@ -500,9 +505,6 @@ Detailed health check including service status.
 }
 ```
 
-## Architecture
-
-![Architecture](image.png)
 
 ### Key Components
 
