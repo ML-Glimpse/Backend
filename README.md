@@ -502,6 +502,8 @@ Detailed health check including service status.
 
 ## Architecture
 
+![Architecture](image.png)
+
 ### Key Components
 
 1. **Face Recognition Service**: Uses InsightFace for face detection and 512-dimensional embedding extraction with gender detection
